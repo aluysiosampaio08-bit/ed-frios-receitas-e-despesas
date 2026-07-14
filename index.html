@@ -1,4 +1,6 @@
 <meta charset="UTF-8">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   * { box-sizing: border-box; font-family: -apple-system, system-ui, sans-serif; }
   body { margin: 0; }
@@ -334,17 +336,95 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.44.0/iconfont/tabler-icons.min.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script>
-if (!window.storage) {
-  window.storage = {
-    async get(key) {
-      const value = localStorage.getItem('edfrios_' + key);
-      return value !== null ? { value } : null;
-    },
-    async set(key, value) {
-      localStorage.setItem('edfrios_' + key, value);
-    }
-  };
+// ============================================================
+// BANCO DE DADOS COMPARTILHADO (Firebase Realtime Database)
+// Cole abaixo a URL do seu banco, entre as aspas.
+// Exemplo: const FIREBASE_URL = 'https://ed-frios-default-rtdb.firebaseio.com';
+// Enquanto estiver vazia, os dados ficam salvos só neste aparelho.
+// ============================================================
+const FIREBASE_URL = 'https://ed-frios-e50fc-default-rtdb.firebaseio.com';
+
+const REMOTO = FIREBASE_URL ? FIREBASE_URL.replace(/\/+$/, '') + '/edfrios' : null;
+const escritasPendentes = new Set();
+
+async function enviarRemoto(key, value) {
+  if (!REMOTO) return;
+  try {
+    const r = await fetch(`${REMOTO}/${key}.json`, { method: 'PUT', body: JSON.stringify(value) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    escritasPendentes.delete(key);
+  } catch (e) {
+    escritasPendentes.add(key);
+  }
 }
+
+window.storage = {
+  async get(key) {
+    const local = localStorage.getItem('edfrios_' + key);
+    if (REMOTO) {
+      try {
+        const r = await fetch(`${REMOTO}/${key}.json`);
+        if (r.ok) {
+          const v = await r.json();
+          if (typeof v === 'string') {
+            localStorage.setItem('edfrios_' + key, v);
+            return { value: v };
+          }
+          if (local !== null) enviarRemoto(key, local);
+        }
+      } catch (e) { /* sem conexão: usa o cache local */ }
+    }
+    return local !== null ? { value: local } : null;
+  },
+  async set(key, value) {
+    localStorage.setItem('edfrios_' + key, value);
+    await enviarRemoto(key, value);
+  }
+};
+
+function algumModalAberto() {
+  return ['modal-perfil', 'modal-overlay', 'modal-gerenciar'].some(id =>
+    !document.getElementById(id).classList.contains('hidden'));
+}
+
+async function sincronizarRemoto() {
+  if (!REMOTO || document.hidden) return;
+  for (const key of [...escritasPendentes]) {
+    const v = localStorage.getItem('edfrios_' + key);
+    if (v !== null) await enviarRemoto(key, v);
+  }
+  if (algumModalAberto()) return;
+  try {
+    const r = await fetch(`${REMOTO}.json`);
+    if (!r.ok) return;
+    const dados = (await r.json()) || {};
+    let mudou = false;
+    for (const key of ['lancamentos', 'socios', 'categorias']) {
+      const remoto = dados[key];
+      if (escritasPendentes.has(key) || typeof remoto !== 'string') continue;
+      if (remoto === localStorage.getItem('edfrios_' + key)) continue;
+      localStorage.setItem('edfrios_' + key, remoto);
+      if (key === 'lancamentos') lancamentos = JSON.parse(remoto);
+      if (key === 'socios') socios = JSON.parse(remoto);
+      if (key === 'categorias') {
+        const p = JSON.parse(remoto);
+        if (p.receita) catReceita = p.receita;
+        if (p.despesa) catDespesa = p.despesa;
+      }
+      mudou = true;
+    }
+    if (mudou) {
+      popularFiltroCategorias();
+      montarTabsAutor();
+      montarCategorias();
+      montarPerfilOpcoes();
+      render();
+    }
+  } catch (e) { /* sem conexão: tenta de novo no próximo ciclo */ }
+}
+
+setInterval(sincronizarRemoto, 15000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) sincronizarRemoto(); });
 
 const CAT_RECEITA_PADRAO = ['Venda balcão','Venda fiado recebido','Venda atacado','Outras receitas'];
 const CAT_DESPESA_PADRAO = ['Fornecedor/Estoque','Aluguel','Energia/Água','Salários','Frete/Transporte','Impostos','Manutenção','Outras despesas'];
@@ -567,24 +647,27 @@ function renderGraficoCategorias(filtrados) {
     legenda.innerHTML = `<div class="grafico-vazio">Nenhuma ${tipo === 'despesa' ? 'despesa' : 'receita'} neste período.</div>`;
     return;
   }
-  canvas.style.display = 'block';
-
   const labels = entradas.map(e => e[0]);
   const valores = entradas.map(e => e[1]);
   const cores = labels.map((_, i) => CORES_GRAFICO[i % CORES_GRAFICO.length]);
 
-  if (chartCategorias) chartCategorias.destroy();
-  chartCategorias = new Chart(canvas, {
-    type: 'doughnut',
-    data: {
-      labels,
-      datasets: [{ data: valores, backgroundColor: cores, borderWidth: 0 }]
-    },
-    options: {
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => fmtMoeda(ctx.raw) } } },
-      cutout: '62%'
-    }
-  });
+  if (typeof Chart === 'undefined') {
+    canvas.style.display = 'none';
+  } else {
+    canvas.style.display = 'block';
+    if (chartCategorias) chartCategorias.destroy();
+    chartCategorias = new Chart(canvas, {
+      type: 'doughnut',
+      data: {
+        labels,
+        datasets: [{ data: valores, backgroundColor: cores, borderWidth: 0 }]
+      },
+      options: {
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => fmtMoeda(ctx.raw) } } },
+        cutout: '62%'
+      }
+    });
+  }
 
   const total = valores.reduce((s,v) => s+v, 0);
   legenda.innerHTML = entradas.map(([cat, val], i) => `
