@@ -1,3 +1,4 @@
+<meta charset="UTF-8">
 <style>
   * { box-sizing: border-box; font-family: -apple-system, system-ui, sans-serif; }
   body { margin: 0; }
@@ -330,8 +331,21 @@
   </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.44.0/iconfont/tabler-icons.min.css"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.44.0/iconfont/tabler-icons.min.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script>
+if (!window.storage) {
+  window.storage = {
+    async get(key) {
+      const value = localStorage.getItem('edfrios_' + key);
+      return value !== null ? { value } : null;
+    },
+    async set(key, value) {
+      localStorage.setItem('edfrios_' + key, value);
+    }
+  };
+}
+
 const CAT_RECEITA_PADRAO = ['Venda balcão','Venda fiado recebido','Venda atacado','Outras receitas'];
 const CAT_DESPESA_PADRAO = ['Fornecedor/Estoque','Aluguel','Energia/Água','Salários','Frete/Transporte','Impostos','Manutenção','Outras despesas'];
 let catReceita = [...CAT_RECEITA_PADRAO];
